@@ -1,0 +1,37 @@
+# Bandit RL configurations
+
+linucb:
+  algorithm: "linucb"
+  alpha: 1.0  # Exploration parameter
+  lambda_: 1.0  # Regularization
+  num_rollouts: 5000
+  update_freq: 100
+  batch_size: 32
+
+thompson:
+  algorithm: "thompson"
+  prior_mean: 0.0
+  prior_variance: 1.0
+  noise_variance: 0.1
+  num_rollouts: 5000
+  update_freq: 100
+  batch_size: 32
+
+# Shared settings
+token_budget: 2000
+compression_rate: 0.75
+top_k_candidates: 10
+
+reward:
+  perplexity_weight: -1.0
+  token_penalty: 0.001
+  correctness_bonus: 1.0
+  normalize: true
+
+features:
+  use_similarity: true
+  use_novelty: true
+  use_length: true
+  use_redundancy: true
+  use_reranker_score: true
+  use_position: true

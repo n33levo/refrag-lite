@@ -1,0 +1,55 @@
+# PPO RL configuration
+
+algorithm: "ppo"
+
+# PPO hyperparameters
+learning_rate: 3.0e-4
+num_epochs: 10
+batch_size: 32
+minibatch_size: 8
+gamma: 0.99  # Discount factor
+gae_lambda: 0.95  # GAE parameter
+clip_epsilon: 0.2  # PPO clipping
+value_coef: 0.5  # Value loss coefficient
+entropy_coef: 0.01  # Entropy bonus
+max_grad_norm: 0.5
+num_rollouts: 10000
+update_freq: 256  # Update every N rollouts
+
+# Policy network
+policy:
+  hidden_dims: [256, 128]
+  activation: "relu"
+  dropout: 0.1
+
+# Value network
+value:
+  hidden_dims: [256, 128]
+  activation: "relu"
+  dropout: 0.1
+
+# Shared settings
+token_budget: 2000
+compression_rate: 0.75
+top_k_candidates: 10
+
+reward:
+  perplexity_weight: -1.0
+  token_penalty: 0.001
+  correctness_bonus: 1.0
+  normalize: true
+
+features:
+  use_similarity: true
+  use_novelty: true
+  use_length: true
+  use_redundancy: true
+  use_reranker_score: true
+  use_position: true
+
+# Curriculum learning
+curriculum:
+  enabled: true
+  start_candidates: 3
+  end_candidates: 10
+  steps: 2000

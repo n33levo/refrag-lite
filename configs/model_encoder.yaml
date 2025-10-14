@@ -1,0 +1,29 @@
+# Encoder model configurations
+
+minilm:
+  model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  embedding_dim: 384
+  pooling: "mean"
+  normalize: true
+  max_length: 256
+
+roberta_large:
+  model_name: "sentence-transformers/all-roberta-large-v1"
+  embedding_dim: 1024
+  pooling: "mean"
+  normalize: true
+  max_length: 512
+
+e5_base:
+  model_name: "intfloat/e5-base-v2"
+  embedding_dim: 768
+  pooling: "mean"
+  normalize: true
+  max_length: 512
+
+bge_base:
+  model_name: "BAAI/bge-base-en-v1.5"
+  embedding_dim: 768
+  pooling: "cls"
+  normalize: true
+  max_length: 512

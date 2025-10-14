@@ -1,0 +1,25 @@
+# LLM model configurations
+
+llama3_1_8b:
+  model_name: "meta-llama/Llama-3.1-8B-Instruct"
+  torch_dtype: "bfloat16"
+  use_flash_attention: true
+  max_length: 4096
+
+mistral_7b:
+  model_name: "mistralai/Mistral-7B-Instruct-v0.2"
+  torch_dtype: "bfloat16"
+  use_flash_attention: true
+  max_length: 8192
+
+zephyr_7b:
+  model_name: "HuggingFaceH4/zephyr-7b-beta"
+  torch_dtype: "bfloat16"
+  use_flash_attention: true
+  max_length: 4096
+
+tinyllama:
+  model_name: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+  torch_dtype: "float32"
+  use_flash_attention: false
+  max_length: 2048

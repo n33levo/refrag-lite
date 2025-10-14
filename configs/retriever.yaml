@@ -1,0 +1,28 @@
+# Retrieval configurations
+
+bm25_only:
+  top_k: 10
+  bm25_weight: 1.0
+  dense_weight: 0.0
+  use_reranker: false
+
+dense_only:
+  top_k: 10
+  bm25_weight: 0.0
+  dense_weight: 1.0
+  use_reranker: false
+
+hybrid:
+  top_k: 10
+  bm25_weight: 0.5
+  dense_weight: 0.5
+  use_reranker: true
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+hybrid_reranked:
+  top_k: 20  # Retrieve more, then rerank
+  bm25_weight: 0.5
+  dense_weight: 0.5
+  use_reranker: true
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  rerank_top_k: 10
