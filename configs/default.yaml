@@ -1,0 +1,154 @@
+# Default configuration for full 1-GPU training
+# Optimized for 24GB VRAM with PEFT
+
+# General settings
+seed: 42
+device: "auto"
+output_dir: "outputs/default"
+checkpoint_dir: "checkpoints/default"
+log_dir: "logs/default"
+
+# Data
+data:
+  name: "hotpotqa"
+  path: "data/hotpotqa"
+  train_samples: -1  # Use all
+  eval_samples: 2000
+  test_samples: 2000
+  max_length: 2048
+  num_workers: 4
+
+# LLM settings
+llm:
+  model_name: "meta-llama/Llama-3.1-8B-Instruct"
+  torch_dtype: "bfloat16"
+  use_flash_attention: true
+  max_length: 2048
+  use_peft: true
+  peft_config:
+    lora_r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+    task_type: "CAUSAL_LM"
+
+# Encoder settings
+encoder:
+  model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  pooling: "mean"
+  normalize: true
+  max_length: 256
+
+# Projector settings
+projector:
+  hidden_dims: [384, 1024, 4096]  # MiniLM=384 -> Llama=4096
+  activation: "gelu"
+  dropout: 0.1
+  layer_norm: true
+
+# Retrieval settings
+retrieval:
+  top_k: 10
+  bm25_weight: 0.5
+  dense_weight: 0.5
+  use_reranker: true
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  chunk_size: 512
+  chunk_overlap: 64
+
+# Training - Stage 1: Reconstruction
+pretrain_recon:
+  batch_size: 16
+  learning_rate: 3.0e-4
+  num_epochs: 5
+  warmup_steps: 500
+  weight_decay: 0.01
+  gradient_accumulation_steps: 2
+  max_grad_norm: 1.0
+  mask_ratio: 0.3
+  scheduler: "cosine"
+
+# Training - Stage 2: Continual Pretraining
+pretrain_cpt:
+  batch_size: 8
+  learning_rate: 2.0e-4
+  num_epochs: 3
+  warmup_steps: 300
+  weight_decay: 0.01
+  gradient_accumulation_steps: 4
+  max_grad_norm: 1.0
+  curriculum:
+    enabled: true
+    start_chunks: 1
+    end_chunks: 5
+    steps: 2000
+  scheduler: "cosine"
+
+# Training - Stage 3: SFT
+sft:
+  batch_size: 4
+  learning_rate: 1.0e-4
+  num_epochs: 3
+  warmup_steps: 200
+  weight_decay: 0.01
+  gradient_accumulation_steps: 8
+  max_grad_norm: 1.0
+  num_compressed: 7
+  num_expanded: 3
+  scheduler: "cosine"
+
+# RL settings
+rl:
+  algorithm: "linucb"
+  token_budget: 2000
+  compression_rate: 0.75
+  top_k_candidates: 10
+
+  reward:
+    perplexity_weight: -1.0
+    token_penalty: 0.001
+    correctness_bonus: 1.0
+
+  bandit:
+    alpha: 1.0
+    lambda_: 1.0
+    num_rollouts: 5000
+    update_freq: 100
+
+  thompson:
+    prior_mean: 0.0
+    prior_variance: 1.0
+    noise_variance: 0.1
+    num_rollouts: 5000
+
+  ppo:
+    learning_rate: 3.0e-4
+    num_epochs: 10
+    batch_size: 32
+    gamma: 0.99
+    gae_lambda: 0.95
+    clip_epsilon: 0.2
+    value_coef: 0.5
+    entropy_coef: 0.01
+    max_grad_norm: 0.5
+    num_rollouts: 10000
+
+# Evaluation
+eval:
+  batch_size: 8
+  num_samples: -1  # Use all test samples
+  metrics: ["em", "f1", "evidence_precision", "evidence_recall"]
+  speed_metrics: ["ttft", "throughput", "vram"]
+  save_predictions: true
+  plot_formats: ["png", "pdf"]
+
+# Logging
+logging:
+  use_mlflow: true
+  mlflow_tracking_uri: "file:./mlruns"
+  experiment_name: "refrag-lite"
+  use_tensorboard: true
+  log_interval: 50
+  eval_interval: 500
+  save_interval: 1000
+  verbose: true

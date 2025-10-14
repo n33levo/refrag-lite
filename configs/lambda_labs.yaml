@@ -1,0 +1,113 @@
+# Lambda Labs GPU Cloud Configuration
+# Based on https://lambda.ai/service/gpu-cloud
+
+# Environment
+environment: "lambda_labs"
+device: "cuda"  # Lambda Labs uses NVIDIA GPUs
+output_dir: "outputs/lambda_labs"
+checkpoint_dir: "checkpoints/lambda_labs"
+log_dir: "logs/lambda_labs"
+
+# Data
+data:
+  name: "hotpotqa"
+  path: "data/hotpotqa"
+  train_samples: 5000  # Full dataset on cloud
+  eval_samples: 1000
+  test_samples: 1000
+  max_length: 2048
+  num_workers: 8  # More workers on cloud
+  max_context_length: 4096
+
+# LLM settings for Lambda Labs
+llm:
+  model_name: "meta-llama/Llama-3.1-8B-Instruct"  # Full model on cloud
+  torch_dtype: "bfloat16"  # Better performance on H100/A100
+  use_peft: true
+  peft_config:
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.1
+    target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]
+
+# Encoder settings
+encoder:
+  model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  max_length: 512
+  device: "cuda"
+
+# Projector settings
+projector:
+  input_dim: 384  # MiniLM dimension
+  hidden_dim: 1024
+  output_dim: 4096  # Llama-3.1-8B embedding dimension
+  num_layers: 2
+  dropout: 0.1
+
+# Training settings (optimized for cloud)
+pretrain_recon:
+  num_epochs: 5
+  batch_size: 16  # Larger batch on cloud
+  learning_rate: 1e-4
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_steps: 100
+  save_steps: 500
+
+pretrain_cpt:
+  num_epochs: 3
+  batch_size: 8
+  learning_rate: 5e-5
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_steps: 200
+  curriculum_steps: 1000
+
+sft:
+  num_epochs: 3
+  batch_size: 4
+  learning_rate: 2e-5
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_steps: 100
+
+# RL settings
+rl:
+  algorithm: "linucb"
+  num_rollouts: 1000  # More rollouts on cloud
+  top_k_candidates: 10
+  token_budget: 2000
+  compression_rate: 0.7
+  
+  bandit:
+    alpha: 0.1
+    lambda_: 0.01
+    update_freq: 10
+  
+  reward:
+    token_penalty: 0.001
+    correctness_bonus: 1.0
+
+# Evaluation settings
+eval:
+  batch_size: 8
+  num_samples: 1000
+  output_dir: "outputs/lambda_labs"
+  metrics: ["em", "f1", "evidence_precision", "evidence_recall"]
+
+# Groq API settings (for inference)
+groq:
+  api_key: "${GROQ_API_KEY}"  # Set via environment variable
+  model: "llama-3.1-8b-instant"  # Groq model
+  base_url: "https://api.groq.com/openai/v1"
+  max_tokens: 512
+  temperature: 0.7
+  timeout: 30
+
+# Lambda Labs specific settings
+lambda_labs:
+  instance_type: "gpu_1x_a100_40gb"  # 1x NVIDIA A100 40GB SXM4
+  region: "us-west-1"
+  storage_size: "100GB"
+  auto_shutdown: true
+  shutdown_timeout: 7200  # 2 hours

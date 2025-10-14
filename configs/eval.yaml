@@ -1,0 +1,81 @@
+# Evaluation configuration
+
+# General
+batch_size: 8
+num_samples: -1  # -1 for all
+device: "auto"
+
+# QA Metrics
+qa_metrics:
+  - "em"  # Exact match
+  - "f1"  # Token F1
+  - "rouge_l"  # ROUGE-L
+  - "evidence_precision"  # Did expanded chunks contain answer?
+  - "evidence_recall"  # Did we expand chunks with answer?
+
+# Speed Metrics
+speed_metrics:
+  - "ttft"  # Time to first token
+  - "throughput"  # Tokens per second
+  - "latency"  # Total generation time
+  - "vram_peak"  # Peak VRAM usage
+  - "vram_allocated"  # Allocated VRAM
+
+# Thresholds for pass/fail
+thresholds:
+  em_min: 0.35  # Minimum acceptable EM
+  f1_min: 0.45  # Minimum acceptable F1
+  ttft_max: 5.0  # Maximum acceptable TTFT (seconds)
+  token_savings_min: 0.3  # Minimum 30% token reduction vs baseline
+
+# Ablations to run
+ablations:
+  curriculum:
+    enabled: [true, false]
+  compression_rate:
+    values: [0.5, 0.6, 0.7, 0.8, 0.9]
+  token_budget:
+    values: [1000, 1500, 2000, 2500, 3000]
+  algorithm:
+    values: ["linucb", "thompson", "ppo"]
+
+# Baselines to compare
+baselines:
+  - name: "standard_rag"
+    description: "Top-k fully expanded"
+  - name: "compression_only"
+    description: "All compressed, no expansion"
+  - name: "random_expand"
+    description: "Random selection under budget"
+  - name: "top_rerank"
+    description: "Expand top-k by reranker score"
+
+# Plotting
+plots:
+  formats: ["png", "pdf"]
+  dpi: 300
+  style: "seaborn-v0_8-darkgrid"
+  figsize: [10, 6]
+
+  quality_vs_cost:
+    x_axis: "avg_tokens"
+    y_axis: ["em", "f1"]
+
+  ttft_vs_quality:
+    x_axis: "ttft"
+    y_axis: ["em", "f1"]
+
+  pareto:
+    x_axis: "avg_tokens"
+    y_axis: "em"
+
+  ablation_heatmap:
+    x_var: "compression_rate"
+    y_var: "token_budget"
+    z_var: "em"
+
+# Output
+save_predictions: true
+save_plots: true
+output_dir: "reports"
+report_format: "markdown"  # markdown, html, latex
