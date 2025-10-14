@@ -97,6 +97,8 @@ eval:
   num_samples: 100
   output_dir: "outputs/groq"
   metrics: ["em", "f1", "evidence_precision", "evidence_recall"]
+  plot_formats: ["png", "pdf"]
+  speed_metrics: ["ttft", "throughput", "vram"]
 
 # Groq API settings
 groq:
