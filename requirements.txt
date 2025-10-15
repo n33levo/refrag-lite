@@ -7,11 +7,13 @@ peft>=0.10.0
 sentence-transformers>=2.6.0
 
 # Retrieval
-faiss-cpu>=1.8.0
+# Use 1.7.4 globally to avoid NumPy ABI mismatch on macOS
+faiss-cpu>=1.7.4
 rank-bm25>=0.2.2
 
 # ML utilities
-numpy>=1.24.0
+# NumPy 2.x breaks FAISS 1.7.x wheels; pin <2 for now
+numpy<2
 pandas>=2.0.0
 scikit-learn>=1.4.0
 scipy>=1.11.0

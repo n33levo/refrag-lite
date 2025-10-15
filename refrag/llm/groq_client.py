@@ -6,6 +6,9 @@ import json
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import random
+from requests import RequestException
+
+from refrag.utils.io import load_yaml as load_config
 
 
 @dataclass
@@ -17,6 +20,8 @@ class GroqConfig:
     max_tokens: int = 512
     temperature: float = 0.7
     timeout: int = 30
+    max_retries: int = 5
+    retry_backoff: float = 0.75
 
 
 class GroqClient:
@@ -68,40 +73,36 @@ class GroqClient:
         
         # Make request
         start_time = time.time()
-        
-        try:
-            response = requests.post(
-                f"{self.config.base_url}/chat/completions",
-                headers=self.headers,
-                json=payload,
-                timeout=self.config.timeout
-            )
-            response.raise_for_status()
-            
-            result = response.json()
-            generation_time = time.time() - start_time
-            
-            # Extract answer
-            answer = result["choices"][0]["message"]["content"]
-            
-            # Calculate metrics
-            input_tokens = result["usage"]["prompt_tokens"]
-            output_tokens = result["usage"]["completion_tokens"]
-            total_tokens = result["usage"]["total_tokens"]
-            
-            return {
-                "answer": answer,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "total_tokens": total_tokens,
-                "generation_time": generation_time,
-                "throughput": output_tokens / generation_time if generation_time > 0 else 0.0,
-                "ttft": generation_time,  # Approximate TTFT
-                "model": self.config.model
-            }
-            
-        except requests.exceptions.RequestException as e:
-            print(f"Groq API error: {e}")
+        for attempt in range(max(1, self.config.max_retries)):
+            try:
+                response = requests.post(
+                    f"{self.config.base_url}/chat/completions",
+                    headers=self.headers,
+                    json=payload,
+                    timeout=self.config.timeout
+                )
+                response.raise_for_status()
+                break
+            except RequestException as e:
+                status = getattr(e.response, "status_code", None)
+                if status == 429 and attempt < self.config.max_retries - 1:
+                    delay = self.config.retry_backoff * (2 ** attempt) + random.uniform(0, 0.2)
+                    time.sleep(delay)
+                    continue
+                print(f"Groq API error: {e}")
+                return {
+                    "answer": "Error: Failed to generate answer",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "generation_time": time.time() - start_time,
+                    "throughput": 0.0,
+                    "ttft": 0.0,
+                    "model": self.config.model,
+                    "error": str(e)
+                }
+        else:
+            # Should not reach due to return in except block
             return {
                 "answer": "Error: Failed to generate answer",
                 "input_tokens": 0,
@@ -111,8 +112,30 @@ class GroqClient:
                 "throughput": 0.0,
                 "ttft": 0.0,
                 "model": self.config.model,
-                "error": str(e)
+                "error": "exhausted retries"
             }
+
+        result = response.json()
+        generation_time = time.time() - start_time
+        
+        # Extract answer
+        answer = result["choices"][0]["message"]["content"]
+        
+        # Calculate metrics
+        input_tokens = result["usage"]["prompt_tokens"]
+        output_tokens = result["usage"]["completion_tokens"]
+        total_tokens = result["usage"]["total_tokens"]
+        
+        return {
+            "answer": answer,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "generation_time": generation_time,
+            "throughput": output_tokens / generation_time if generation_time > 0 else 0.0,
+            "ttft": generation_time,  # Approximate TTFT
+            "model": self.config.model
+        }
     
     def compute_perplexity(self, question: str, context_chunks: List[str], 
                           answer: str) -> float:
@@ -194,15 +217,23 @@ def create_groq_client(config_path: str = "configs/lambda_labs.yaml") -> GroqCli
     Returns:
         GroqClient instance
     """
-    from refrag.utils.io import load_yaml as load_config
-    
     config = load_config(config_path)
     groq_config = config["groq"]
     
-    # Get API key from environment
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise ValueError("GROQ_API_KEY environment variable not set")
+    # Attempt to load .env automatically so users don't have to export manually
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except Exception:
+        pass
+    
+    # Get API key from environment or config fallback
+    api_key = os.getenv("GROQ_API_KEY") or groq_config.get("api_key")
+    if not api_key or "${" in str(api_key):
+        raise ValueError(
+            "GROQ_API_KEY environment variable not set and no usable key found in config."
+        )
     
     groq_config["api_key"] = api_key
     

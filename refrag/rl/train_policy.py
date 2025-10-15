@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from typing import Dict, Any, Optional
 from refrag.rl.policies import Policy
 from refrag.rl.bandit import LinUCBPolicy, ThompsonSamplingPolicy
+from refrag.rl.features import extract_chunk_features
 from refrag.utils.io import load_yaml as load_config, save_checkpoint
+from refrag.utils.token_budget import estimate_tokens
 
 
 @dataclass
@@ -35,25 +37,29 @@ def train_policy(config_path: str, algo: str = "linucb"):
     else:
         raise ValueError(f"Unknown algorithm: {algo}")
     
+    rl_cfg = config["rl"]
+    bandit_cfg = rl_cfg.get("bandit", {})
+    reward_cfg = rl_cfg.get("reward", {})
+
     print(f"Training {algo} policy...")
     print(f"Using features: query similarity, length, position, reranker score, novelty, redundancy")
-    print(f"Budget: {config['rl']['token_budget']} tokens")
-    print(f"Compression rate: {config['rl']['compression_rate']}")
+    print(f"Budget: {rl_cfg['token_budget']} tokens")
+    print(f"Compression rate: {rl_cfg.get('compression_rate', 0.7)}")
     
     # Get budget from config
-    budget = config['rl']['token_budget']
+    budget = rl_cfg['token_budget']
     
     # Training loop with actual rollouts
-    print(f"Starting RL policy training with {config['rl']['bandit']['num_rollouts']} rollouts...")
-    
-    num_rollouts = config['rl']['bandit']['num_rollouts']
-    update_freq = config['rl']['bandit']['update_freq']
+    num_rollouts = bandit_cfg.get("num_rollouts", rl_cfg.get("num_rollouts", 100))
+    update_freq = bandit_cfg.get("update_freq", rl_cfg.get("update_freq", 10))
+
+    print(f"Starting RL policy training with {num_rollouts} rollouts...")
     
     total_reward = 0.0
     rollout_rewards = []
     
     # Load real dataset for rollouts
-    from refrag.data.hotpotqa import load_hotpotqa_samples
+    from refrag.data.hotpotqa import HotpotQADataset, load_hotpotqa_samples
     from refrag.llm.inference_real import RealLLMInference, compute_em_f1, compute_evidence_metrics
     from refrag.retrieval.real_retrieval import RealHybridRetriever, RealBM25Retriever, RealDenseRetriever
     from refrag.utils.io import get_device
@@ -72,10 +78,14 @@ def train_policy(config_path: str, algo: str = "linucb"):
     try:
         bm25_retriever = RealBM25Retriever(f"{config['data']['path']}/../indexes/bm25_index.pkl")
         dense_retriever = RealDenseRetriever(index_path=f"{config['data']['path']}/../indexes/dense_index.pkl")
-        hybrid_retriever = RealHybridRetriever(bm25_retriever, dense_retriever)
-        print("Loaded existing retrieval indexes")
-    except:
-        print("No existing indexes found, using dummy retrieval")
+        if bm25_retriever.bm25 is not None and dense_retriever.index is not None:
+            hybrid_retriever = RealHybridRetriever(bm25_retriever, dense_retriever)
+            print("Loaded existing retrieval indexes")
+        else:
+            print("Retrieval indexes missing or incomplete, using dataset contexts")
+            hybrid_retriever = None
+    except Exception as exc:
+        print(f"Failed to load retrieval indexes ({exc}), using dataset contexts")
         hybrid_retriever = None
     
     # Load evaluation samples
@@ -97,47 +107,29 @@ def train_policy(config_path: str, algo: str = "linucb"):
             try:
                 retrieved_chunks = hybrid_retriever.search(question, top_k=config['rl']['top_k_candidates'])
                 context_chunks = [chunk[0] for chunk in retrieved_chunks]
-            except:
-                # Extract context chunks manually from sample
-                context_chunks = []
-                for title, sentences in sample.get("context", []):
-                    context_chunks.extend(sentences[:2])  # Take first 2 sentences from each context
-                context_chunks = context_chunks[:config['rl']['top_k_candidates']]
+                reranker_scores = [chunk[1] for chunk in retrieved_chunks]
+            except Exception:
+                context_chunks = HotpotQADataset.get_context_chunks(sample, chunk_size=config['rl'].get('chunk_size', 256))
+                reranker_scores = None
         else:
-            # Extract context chunks manually from sample
-            context_chunks = []
-            for context_item in sample.get("context", []):
-                # Handle different context structures
-                if isinstance(context_item, list) and len(context_item) >= 2:
-                    title, sentences = context_item[0], context_item[1]
-                    if isinstance(sentences, list):
-                        context_chunks.extend(sentences[:2])  # Take first 2 sentences from each context
-                elif isinstance(context_item, str):
-                    context_chunks.append(context_item)
-            context_chunks = context_chunks[:config['rl']['top_k_candidates']]
+            context_chunks = HotpotQADataset.get_context_chunks(sample, chunk_size=config['rl'].get('chunk_size', 256))
+            reranker_scores = None
+
+        context_chunks = context_chunks[:config['rl']['top_k_candidates']]
         
         if not context_chunks:
             context_chunks = [f"Context {i+1}: Sample context for question" for i in range(config['rl']['top_k_candidates'])]
+            reranker_scores = None
         
-        # Extract features for each chunk
-        features = []
-        for i, chunk in enumerate(context_chunks):
-            # Real features: similarity, length, position, etc.
-            chunk_features = [
-                len(chunk) / 1000.0,  # Length (normalized)
-                i / len(context_chunks),  # Position
-                len(chunk.split()) / 100.0,  # Word count (normalized)
-                0.5,  # Reranker score (placeholder)
-                0.3,  # Novelty (placeholder)
-                0.2   # Redundancy (placeholder)
-            ]
-            features.append(chunk_features)
-        
-        # Use CPU for features (simple tensors)
-        features = torch.tensor(features, dtype=torch.float32)
+        features_np = extract_chunk_features(
+            chunks=context_chunks,
+            query=question,
+            reranker_scores=reranker_scores,
+        )
+        features = torch.from_numpy(features_np)
         
         # Policy selects chunks to expand
-        selected_indices = policy.select(features.cpu().numpy(), budget)
+        selected_indices = policy.select(features_np, budget)
         
         # Run real inference with Groq
         try:
@@ -160,27 +152,25 @@ def train_policy(config_path: str, algo: str = "linucb"):
             )
             
             # Count tokens
-            num_expanded = len(selected_indices)
-            expanded_tokens = result["total_tokens"]
+            expanded_tokens = sum(estimate_tokens(context_chunks[i]) for i in selected_indices)
             
             # Real reward calculation
-            token_penalty = config['rl']['reward']['token_penalty']
-            correctness_bonus = config['rl']['reward']['correctness_bonus'] * (em + f1) / 2.0
+            token_penalty = reward_cfg.get('token_penalty', 0.001)
+            correctness_bonus = reward_cfg.get('correctness_bonus', 1.0) * (em + f1) / 2.0
             
             reward = -perplexity - token_penalty * expanded_tokens + correctness_bonus
             
         except Exception as e:
             print(f"Error in rollout {rollout_idx}: {e}")
             # Fallback to dummy reward
-            num_expanded = len(selected_indices)
-            expanded_tokens = num_expanded * 100
+            expanded_tokens = sum(estimate_tokens(context_chunks[i]) for i in selected_indices)
             base_perplexity = 10.0 + torch.randn(1).item() * 2.0
-            token_penalty = config['rl']['reward']['token_penalty']
-            correctness_bonus = config['rl']['reward']['correctness_bonus'] if torch.rand(1).item() > 0.7 else 0.0
+            token_penalty = reward_cfg.get('token_penalty', 0.001)
+            correctness_bonus = reward_cfg.get('correctness_bonus', 1.0) if torch.rand(1).item() > 0.7 else 0.0
             reward = -base_perplexity - token_penalty * expanded_tokens + correctness_bonus
         
         # Update policy
-        policy.update(features.numpy(), selected_indices, reward)
+        policy.update(features_np, selected_indices, reward)
         
         total_reward += reward
         rollout_rewards.append(reward)

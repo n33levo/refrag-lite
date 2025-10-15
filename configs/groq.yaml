@@ -77,10 +77,10 @@ sft:
 # RL settings (optimized for Groq)
 rl:
   algorithm: "linucb"
-  num_rollouts: 200  # Fewer rollouts for faster testing
-  top_k_candidates: 8
-  token_budget: 1500
-  compression_rate: 0.7
+  num_rollouts: 600
+  top_k_candidates: 12
+  token_budget: 2000
+  compression_rate: 0.6
   
   bandit:
     alpha: 0.1
@@ -88,8 +88,8 @@ rl:
     update_freq: 5
   
   reward:
-    token_penalty: 0.001
-    correctness_bonus: 1.0
+    token_penalty: 0.0015
+    correctness_bonus: 1.8
 
 # Evaluation settings
 eval:

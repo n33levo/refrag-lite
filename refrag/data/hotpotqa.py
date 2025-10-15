@@ -83,7 +83,8 @@ class HotpotQADataset(Dataset):
             "id": sample.get("_id", str(idx))
         }
     
-    def get_context_chunks(self, sample: Dict[str, Any], chunk_size: int = 256) -> List[str]:
+    @staticmethod
+    def get_context_chunks(sample: Dict[str, Any], chunk_size: int = 256) -> List[str]:
         """Extract context chunks from supporting facts and context."""
         chunks = []
         

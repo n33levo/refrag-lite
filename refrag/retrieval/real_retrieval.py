@@ -334,8 +334,7 @@ def build_corpus_from_hotpotqa(data_path: str, max_docs: int = None) -> List[Dic
         sample = dataset[i]
         
         # Extract context chunks
-        from refrag.data.hotpotqa import HotpotQADataset
-        chunks = HotpotQADataset.get_context_chunks(sample)
+        chunks = HotpotQADataset.get_context_chunks(sample, chunk_size=256)
         
         # Add each chunk as a separate document
         for j, chunk in enumerate(chunks):

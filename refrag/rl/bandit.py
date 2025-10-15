@@ -2,6 +2,7 @@
 import numpy as np
 from typing import List
 from refrag.rl.policies import Policy
+from refrag.rl.features import TOKEN_SCALE
 
 class LinUCBPolicy(Policy):
     def __init__(self, feature_dim: int, alpha: float = 1.0, lambda_: float = 1.0):
@@ -20,10 +21,12 @@ class LinUCBPolicy(Policy):
         selected = []
         tokens = 0
         for idx in np.argsort(-ucb):
-            chunk_tokens = int(features[idx, 1] * 1000)
-            if tokens + chunk_tokens <= budget:
+            chunk_tokens = max(1, int(round(features[idx, 1] * TOKEN_SCALE)))
+            if tokens + chunk_tokens <= budget or not selected:
                 selected.append(int(idx))
                 tokens += chunk_tokens
+                if tokens >= budget:
+                    break
 
         return selected
 
@@ -45,10 +48,12 @@ class ThompsonSamplingPolicy(Policy):
         selected = []
         tokens = 0
         for idx in np.argsort(-scores):
-            chunk_tokens = int(features[idx, 1] * 1000)
-            if tokens + chunk_tokens <= budget:
+            chunk_tokens = max(1, int(round(features[idx, 1] * TOKEN_SCALE)))
+            if tokens + chunk_tokens <= budget or not selected:
                 selected.append(int(idx))
                 tokens += chunk_tokens
+                if tokens >= budget:
+                    break
 
         return selected
 

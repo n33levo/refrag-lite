@@ -7,6 +7,8 @@ from pathlib import Path
 import json
 from typing import List, Dict, Any, Tuple
 from refrag.utils.io import load_yaml as load_config, get_device
+from refrag.utils.token_budget import estimate_tokens
+from refrag.rl.features import extract_chunk_features as build_chunk_features
 
 
 @dataclass
@@ -30,7 +32,7 @@ def evaluate_qa(config_path: str):
     print("Loading real components for evaluation...")
     
     # Load real components
-    from refrag.data.hotpotqa import load_hotpotqa_samples
+    from refrag.data.hotpotqa import HotpotQADataset, load_hotpotqa_samples
     from refrag.llm.inference_real import RealLLMInference, compute_em_f1, compute_evidence_metrics
     from refrag.retrieval.real_retrieval import RealHybridRetriever, RealBM25Retriever, RealDenseRetriever
     from refrag.rl.bandit import LinUCBPolicy
@@ -54,10 +56,14 @@ def evaluate_qa(config_path: str):
     try:
         bm25_retriever = RealBM25Retriever(f"{config['data']['path']}/../indexes/bm25_index.pkl")
         dense_retriever = RealDenseRetriever(index_path=f"{config['data']['path']}/../indexes/dense_index.pkl")
-        hybrid_retriever = RealHybridRetriever(bm25_retriever, dense_retriever)
-        print("Loaded existing retrieval indexes")
-    except:
-        print("No existing indexes found, using context from dataset")
+        if bm25_retriever.bm25 is not None and dense_retriever.index is not None:
+            hybrid_retriever = RealHybridRetriever(bm25_retriever, dense_retriever)
+            print("Loaded existing retrieval indexes")
+        else:
+            print("Retrieval indexes missing or incomplete, using dataset contexts")
+            hybrid_retriever = None
+    except Exception as exc:
+        print(f"Failed to load retrieval indexes ({exc}), using dataset contexts")
         hybrid_retriever = None
     
     # Load RL policy
@@ -114,41 +120,42 @@ def evaluate_qa(config_path: str):
         
         try:
             # Get context chunks
+            reranker_scores = None
             if hybrid_retriever:
-                retrieved_chunks = hybrid_retriever.search(question, top_k=config['rl']['top_k_candidates'])
+                retrieved_chunks = hybrid_retriever.search(
+                    question, top_k=config['rl']['top_k_candidates']
+                )
                 context_chunks = [chunk[0] for chunk in retrieved_chunks]
+                reranker_scores = [chunk[1] for chunk in retrieved_chunks]
             else:
-                # Use the proper data loading function to extract context chunks
-                from refrag.data.hotpotqa import HotpotQADataset
-                dataset = HotpotQADataset("data/hotpotqa", "dev", 1)
-                context_chunks = dataset.get_context_chunks(sample, chunk_size=256)
-                
-                # Limit to top_k_candidates
-                context_chunks = context_chunks[:config['rl']['top_k_candidates']]
+                context_chunks = HotpotQADataset.get_context_chunks(
+                    sample, chunk_size=config['rl'].get('chunk_size', 256)
+                )
             
+            context_chunks = context_chunks[:config['rl']['top_k_candidates']]
             if not context_chunks:
-                context_chunks = [f"Context {j+1}: Sample context for question" for j in range(config['rl']['top_k_candidates'])]
-            
-            # Select chunks using policy or random selection
+                context_chunks = [
+                    f"Context {j+1}: Sample context for question"
+                    for j in range(config['rl']['top_k_candidates'])
+                ]
+                reranker_scores = None
+
+            features = build_chunk_features(
+                chunks=context_chunks,
+                query=question,
+                reranker_scores=reranker_scores,
+            )
+
+            # Select chunks using policy or heuristic selection
             if policy:
-                # Extract features
-                features = []
-                for j, chunk in enumerate(context_chunks):
-                    chunk_features = [
-                        len(chunk) / 1000.0,  # Length
-                        j / len(context_chunks),  # Position
-                        len(chunk.split()) / 100.0,  # Word count
-                        0.5,  # Reranker score
-                        0.3,  # Novelty
-                        0.2   # Redundancy
-                    ]
-                    features.append(chunk_features)
-                
-                features = torch.tensor(features, dtype=torch.float32)
-                selected_indices = policy.select(features.numpy(), config['rl']['token_budget'])
+                selected_indices = policy.select(features, config['rl']['token_budget'])
             else:
-                # Smart selection based on relevance scoring
-                selected_indices = smart_context_selection(context_chunks, question, config['rl']['token_budget'])
+                selected_indices = smart_context_selection(
+                    context_chunks=context_chunks,
+                    question=question,
+                    token_budget=config['rl']['token_budget'],
+                    precomputed_features=features,
+                )
             
             # Generate answer using Groq
             print(f"  Calling Groq API for sample {i+1}...")
@@ -180,7 +187,7 @@ def evaluate_qa(config_path: str):
             f1_scores.append(f1)
             evidence_precisions.append(precision)
             evidence_recalls.append(recall)
-            token_counts.append(result["total_tokens"])
+            token_counts.append(sum(estimate_tokens(context_chunks[j]) for j in selected_indices))
             
         except Exception as e:
             print(f"Error processing sample {i}: {e}")
@@ -235,112 +242,50 @@ def main():
     args = tyro.cli(Args)
     evaluate_qa(args.config)
 
-def extract_chunk_features(chunk: str, question: str, position: int, all_chunks: List[str]) -> List[float]:
-    """Extract features for a context chunk.
-    
-    Args:
-        chunk: The context chunk text
-        question: The question being asked
-        position: Position of chunk in the list
-        all_chunks: All available context chunks
-        
-    Returns:
-        List of features for the chunk
-    """
-    import re
-    from collections import Counter
-    
-    # Feature 1: Length (normalized)
-    length_feature = len(chunk) / 1000.0
-    
-    # Feature 2: Position (normalized)
-    position_feature = position / len(all_chunks) if all_chunks else 0.0
-    
-    # Feature 3: Word count (normalized)
-    word_count = len(chunk.split())
-    word_count_feature = word_count / 100.0
-    
-    # Feature 4: Question-chunk similarity (keyword overlap)
-    question_words = set(re.findall(r'\b\w+\b', question.lower()))
-    chunk_words = set(re.findall(r'\b\w+\b', chunk.lower()))
-    common_words = question_words.intersection(chunk_words)
-    similarity_feature = len(common_words) / max(len(question_words), 1)
-    
-    # Feature 5: Novelty (inverse redundancy with other chunks)
-    redundancy_scores = []
-    for other_chunk in all_chunks:
-        if other_chunk != chunk:
-            other_words = set(re.findall(r'\b\w+\b', other_chunk.lower()))
-            overlap = len(chunk_words.intersection(other_words))
-            redundancy = overlap / max(len(chunk_words), 1)
-            redundancy_scores.append(redundancy)
-    
-    novelty_feature = 1.0 - (sum(redundancy_scores) / len(redundancy_scores)) if redundancy_scores else 1.0
-    
-    # Feature 6: Answer likelihood (look for answer patterns)
-    answer_patterns = [
-        r'\b(yes|no)\b',
-        r'\b(american|british|french|german|chinese|japanese)\b',
-        r'\b(director|actor|writer|producer|singer|musician)\b',
-        r'\b(chief|president|minister|secretary|manager)\b',
-        r'\b(protocol|defense|state|treasury|justice)\b',
-    ]
-    
-    answer_likelihood = 0.0
-    for pattern in answer_patterns:
-        if re.search(pattern, chunk.lower()):
-            answer_likelihood += 0.2
-    
-    answer_likelihood = min(answer_likelihood, 1.0)
-    
-    return [
-        length_feature,
-        position_feature,
-        word_count_feature,
-        similarity_feature,
-        novelty_feature,
-        answer_likelihood
-    ]
-
-
-def smart_context_selection(context_chunks: List[str], question: str, budget: int) -> List[int]:
-    """Select context chunks using smart relevance scoring.
-    
-    Args:
-        context_chunks: List of available context chunks
-        question: The question being asked
-        budget: Maximum number of chunks to select
-        
-    Returns:
-        List of selected chunk indices
-    """
+def smart_context_selection(
+    context_chunks: List[str],
+    question: str,
+    token_budget: int,
+    precomputed_features: np.ndarray | None = None,
+) -> List[int]:
+    """Heuristic fallback selection that honours the token budget."""
     if not context_chunks:
         return []
-    
-    # Calculate relevance scores for each chunk
-    scores = []
-    for i, chunk in enumerate(context_chunks):
-        features = extract_chunk_features(chunk, question, i, context_chunks)
-        
-        # Weighted combination of features
-        # Higher weight on similarity and answer likelihood
-        relevance_score = (
-            features[3] * 0.4 +  # Similarity
-            features[5] * 0.3 +  # Answer likelihood
-            features[4] * 0.2 +  # Novelty
-            (1.0 - features[1]) * 0.1  # Position (prefer earlier chunks)
-        )
-        
-        scores.append((relevance_score, i))
-    
-    # Sort by relevance score (descending)
-    scores.sort(key=lambda x: x[0], reverse=True)
-    
-    # Select top chunks up to budget
-    num_to_select = min(budget, len(context_chunks))
-    selected_indices = [idx for _, idx in scores[:num_to_select]]
-    
-    return selected_indices
+
+    if precomputed_features is None:
+        precomputed_features = build_chunk_features(context_chunks, question)
+
+    # Score chunks: favour similarity, reranker scores, and novelty while
+    # slightly preferring earlier chunks and penalising redundancy.
+    similarity = precomputed_features[:, 0]
+    reranker = precomputed_features[:, 3]
+    novelty = precomputed_features[:, 4]
+    position = precomputed_features[:, 2]
+    redundancy = precomputed_features[:, 5]
+
+    scores = (
+        0.45 * similarity
+        + 0.35 * reranker
+        + 0.15 * novelty
+        + 0.05 * (1.0 - position)
+        - 0.05 * redundancy
+    )
+
+    order = np.argsort(-scores)
+    selected: List[int] = []
+    used_tokens = 0
+    budget = max(token_budget, 0)
+
+    for idx in order:
+        chunk_tokens = max(1, estimate_tokens(context_chunks[idx]))
+        if used_tokens + chunk_tokens <= budget or not selected or budget == 0:
+            selected.append(int(idx))
+            used_tokens += chunk_tokens
+        if budget > 0 and used_tokens >= budget:
+            break
+
+    selected.sort()
+    return selected
 
 
 if __name__ == "__main__":
