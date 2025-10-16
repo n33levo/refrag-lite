@@ -1,24 +1,23 @@
-# Groq API Configuration
-# Optimized for Groq API usage (no local LLM inference)
+# Groq-first config with local training compatibility
 
 # Environment
 environment: "groq"
-device: "cuda"  # Use GPU on Lambda Labs
+device: "auto"
 output_dir: "outputs/groq"
 checkpoint_dir: "checkpoints/groq"
 log_dir: "logs/groq"
 
-# LLM Configuration (for local training components)
+# LLM used for any local training/fallback inference
 llm:
   model_name: "meta-llama/Llama-3.1-8B-Instruct"
-  torch_dtype: "float16"  # Use float16 for GPU efficiency
-  max_context_length: 2048
+  torch_dtype: "bfloat16"
+  max_length: 2048
   use_peft: true
   peft_config:
     task_type: "CAUSAL_LM"
     r: 16
     lora_alpha: 32
-    target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]
+    target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     lora_dropout: 0.1
     bias: "none"
 
@@ -26,88 +25,106 @@ llm:
 data:
   name: "hotpotqa"
   path: "data/hotpotqa"
-  train_samples: 1000  # Smaller for faster testing
-  eval_samples: 100
-  test_samples: 100
+  train_samples: 1000
+  eval_samples: 200
+  test_samples: 200
   max_length: 2048
-  num_workers: 4
-  max_context_length: 4096
+  num_workers: 0  # Use 0 on macOS to avoid spawn-related re-import warnings
 
-# Encoder settings (still local)
+# Retrieval (needed for policy features and optional index usage)
+retrieval:
+  top_k: 10
+  bm25_weight: 0.5
+  dense_weight: 0.5
+  use_reranker: true
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  chunk_size: 512
+  chunk_overlap: 64
+
+# Encoder (teacher for compression)
 encoder:
   model_name: "sentence-transformers/all-MiniLM-L6-v2"
   max_length: 512
-  device: "cuda"  # Use GPU for encoder too
+  device: "mps"
+  normalize: true
 
-# Projector settings (still local)
+# Projector (maps encoder vectors -> LLM hidden size)
 projector:
-  input_dim: 384  # MiniLM dimension
-  hidden_dim: 512
-  output_dim: 4096  # Llama-3.1-8B embedding dimension
-  num_layers: 2
+  hidden_dims: [512, 1024, 4096]
+  activation: "gelu"
   dropout: 0.1
+  layer_norm: true
 
-# Training settings (optimized for Groq)
+# Training – Stage 1: Reconstruction
 pretrain_recon:
-  num_epochs: 3
-  batch_size: 8
-  learning_rate: 1e-4
-  weight_decay: 0.01
-  max_grad_norm: 1.0
-  warmup_steps: 50
-  save_steps: 100
-
-pretrain_cpt:
-  num_epochs: 2
+  num_epochs: 1
   batch_size: 4
-  learning_rate: 5e-5
+  learning_rate: 1.0e-4
   weight_decay: 0.01
   max_grad_norm: 1.0
-  warmup_steps: 100
-  curriculum_steps: 500
+  gradient_accumulation_steps: 2
 
-sft:
-  num_epochs: 2
+# Training – Stage 2: Continual Pretraining with mixed contexts
+pretrain_cpt:
+  num_epochs: 1
   batch_size: 2
-  learning_rate: 2e-5
+  learning_rate: 5.0e-5
   weight_decay: 0.01
   max_grad_norm: 1.0
-  warmup_steps: 50
+  gradient_accumulation_steps: 2
+  curriculum:
+    enabled: true
+    start_chunks: 1
+    end_chunks: 5
+    steps: 500
+  projector_weight: 0.2
 
-# RL settings (optimized for Groq)
+# Training – Stage 3: SFT on QA
+sft:
+  num_epochs: 1
+  batch_size: 1
+  learning_rate: 2.0e-5
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 4
+  num_compressed: 7
+  num_expanded: 3
+  projector_weight: 0.15
+  compressed_reg_weight: 0.01
+
+# RL settings
 rl:
   algorithm: "linucb"
-  num_rollouts: 200  # Fewer rollouts for faster testing
   top_k_candidates: 8
   token_budget: 1500
   compression_rate: 0.7
-  
   bandit:
-    alpha: 0.1
-    lambda_: 0.01
-    update_freq: 5
-  
+    alpha: 0.5
+    lambda_: 1.0
+    update_freq: 10
+    num_rollouts: 200
   reward:
-    token_penalty: 0.001
-    correctness_bonus: 1.0
+    perplexity_weight: -0.5
+    token_penalty: 0.0005
+    correctness_bonus: 2.0
 
-# Evaluation settings
+# Evaluation
 eval:
   batch_size: 4
   num_samples: 100
   output_dir: "outputs/groq"
   metrics: ["em", "f1", "evidence_precision", "evidence_recall"]
 
-# Groq API settings
+# Groq API (used if GROQ_API_KEY is available)
 groq:
-  api_key: "${GROQ_API_KEY}"  # Set via environment variable
-  model: "llama-3.1-8b-instant"  # Fast Groq model
+  api_key: "${GROQ_API_KEY}"
+  model: "llama-3.1-8b-instant"
   base_url: "https://api.groq.com/openai/v1"
-  max_tokens: 256  # Shorter responses for faster processing
+  max_tokens: 256
   temperature: 0.7
-  timeout: 15  # Shorter timeout for faster failures
+  timeout: 15
 
-# Speed settings (optimized for Groq)
+# Speed evaluation (optional)
 speed:
   num_samples: 50
   warmup_samples: 5
