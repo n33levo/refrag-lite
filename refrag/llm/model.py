@@ -17,12 +17,18 @@ def load_llm(model_name: str, use_peft: bool = False, peft_config: Optional[Dict
     )
 
     if use_peft and peft_config:
+        # Support both old-style (lora_r) and HF-style (r) keys
+        r = peft_config.get("lora_r", peft_config.get("r", 16))
+        alpha = peft_config.get("lora_alpha", peft_config.get("alpha", 32))
+        dropout = peft_config.get("lora_dropout", peft_config.get("dropout", 0.05))
+        target_modules = peft_config.get("target_modules", ["q_proj", "v_proj"])
+        task_type = peft_config.get("task_type", TaskType.CAUSAL_LM)
         lora_config = LoraConfig(
-            r=peft_config.get("lora_r", 16),
-            lora_alpha=peft_config.get("lora_alpha", 32),
-            lora_dropout=peft_config.get("lora_dropout", 0.05),
-            target_modules=peft_config.get("target_modules", ["q_proj", "v_proj"]),
-            task_type=TaskType.CAUSAL_LM
+            r=r,
+            lora_alpha=alpha,
+            lora_dropout=dropout,
+            target_modules=target_modules,
+            task_type=task_type,
         )
         model = get_peft_model(model, lora_config)
 

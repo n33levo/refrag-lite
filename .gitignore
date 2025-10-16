@@ -91,3 +91,6 @@ id_rsa.pub
 
 # OS
 Thumbs.db
+
+CLOUD_GPU_SETUP.md
+UPGRADE_SUMMARY.md

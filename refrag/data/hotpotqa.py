@@ -1,10 +1,10 @@
 """HotpotQA dataset loading and processing."""
 import json
-import torch
-from torch.utils.data import Dataset, DataLoader
-from typing import List, Dict, Any, Tuple
 from pathlib import Path
-import random
+from typing import Any, Dict, List, Tuple
+
+import torch
+from torch.utils.data import DataLoader, Dataset
 
 
 class HotpotQADataset(Dataset):
@@ -83,7 +83,8 @@ class HotpotQADataset(Dataset):
             "id": sample.get("_id", str(idx))
         }
     
-    def get_context_chunks(self, sample: Dict[str, Any], chunk_size: int = 256) -> List[str]:
+    @staticmethod
+    def get_context_chunks(sample: Dict[str, Any], chunk_size: int = 256) -> List[str]:
         """Extract context chunks from supporting facts and context."""
         chunks = []
         
