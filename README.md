@@ -38,6 +38,8 @@ Query → Retrieve K chunks → RL Policy → Expand few, compress rest → LLM 
 ```bash
 # Setup
 make setup
+source venv/bin/activate
+pip install -r requirements.txt
 
 # Download data and build indexes (tiny subset)
 make data-tiny
@@ -46,7 +48,7 @@ make data-tiny
 make tiny
 
 # View results
-cat reports/tiny_run_summary.md
+cat outputs/tiny/evaluation_report.md
 ```
 
 See [Results](#results-deployed-setting) for the deployed benchmark results.
@@ -139,16 +141,10 @@ python -m refrag.eval.speed_eval --config configs/eval.yaml
 python -m refrag.eval.report --config configs/eval.yaml
 ```
 
-### 6. Export Policy
-
-```bash
-python scripts/export_policy.py --checkpoint checkpoints/bandit_best.pt --out policy.bin
-```
-
 ## Makefile Targets
 
 ```bash
-make setup        # Create environment and install dependencies
+make setup        # Create virtual environment
 make data         # Download and index full HotpotQA dataset
 make data-tiny    # Download and index tiny subset (for quick testing)
 make tiny         # Run complete tiny pipeline
@@ -236,6 +232,12 @@ LLM context compression with RL-selective expansion achieved the following resul
 | Throughput | **3×** |
 | QA accuracy | **Held** |
 | Validation | **Verified by ablations** |
+
+![Deployment results: prompt tokens decrease from 100% to 33% of baseline; throughput increases from 1× to 3×](plots/deployment_results.png)
+
+Baseline RAG is normalized to 100% prompt tokens and 1× throughput.
+
+Regenerate the figure with `python plots/plot_results.py`.
 
 ## Project Structure
 
