@@ -233,11 +233,9 @@ LLM context compression with RL-selective expansion achieved the following resul
 | QA accuracy | **Held** |
 | Validation | **Verified by ablations** |
 
-![Deployment results: prompt tokens decrease from 100% to 33% of baseline; throughput increases from 1× to 3×](plots/deployment_results.png)
+## Quality and Latency Comparison
 
-Baseline RAG is normalized to 100% prompt tokens and 1× throughput.
-
-Regenerate the figure with `python plots/plot_results.py`.
+![Quality vs cost and speed vs quality trade-offs](plots/quality_vs_cost.png)
 
 ## Project Structure
 
